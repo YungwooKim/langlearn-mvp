@@ -94,6 +94,7 @@ Deno.serve(async () => {
           app_id: ONESIGNAL_APP_ID,
           include_aliases: { external_id: [item.onesignal_external_id] },
           target_channel: 'push',
+          url: 'https://mvp-app-plum.vercel.app/home.html',
           headings: { ko: 'LangLearn 🌐', en: 'LangLearn' },
           contents: { ko: message, en: message }
         })
