@@ -117,14 +117,30 @@ async function load() {
       </div>
     </div>`;
 
-  /* 역량 진행 배너 */
+  /* 역량 진행 배너 + 개인화 데이터 */
   if (_isEnrolled) {
+    /* 개인화 데이터 먼저 로드 (다음 강의 계산에 필요) */
+    _completedIds = await fetchCompletedSessionIds(session.user_id);
+    const res = await buildPersonalizedSequence(session.user_id, lectureId);
+    _personalSequence = res.sequence;
+    _myGoals = res.myGoals;
+    _allGoals = res.allGoals;
+
+    /* 다음 미완료 세션 */
+    const nextSess = _personalSequence.find(s => !_completedIds.includes(s.id));
+
+    /* 배너 구성: 다음 강의 재생 버튼 + 역량 진행 현황 카드 */
     const lectureGoals = (allProgress || []).filter(p => p.lecture_id === lectureId && p.status === 'in_progress');
+    const avgPct = lectureGoals.length
+      ? Math.round(lectureGoals.reduce((s, g) => s + Number(g.progress_pct), 0) / lectureGoals.length)
+      : 0;
+
+    let bannerHtml = '';
+    if (nextSess) {
+      bannerHtml += `<a href="/learn.html?session=${nextSess.id}&lecture=${lectureId}" class="btn btn-primary" style="margin:12px 16px 4px;display:block;">▶ 다음 강의 이어보기 — ${nextSess.goalTitle}</a>`;
+    }
     if (lectureGoals.length) {
-      const avgPct = Math.round(lectureGoals.reduce((s, g) => s + Number(g.progress_pct), 0) / lectureGoals.length);
-      const bannerEl = document.getElementById('progressBanner');
-      bannerEl.style.display = 'block';
-      bannerEl.innerHTML = `
+      bannerHtml += `
         <div class="lecture-progress-banner" onclick="location.href='/status.html?lecture=${lectureId}'">
           <div class="lpb-left">
             <div class="lpb-title">내 역량 진행 현황</div>
@@ -133,13 +149,11 @@ async function load() {
           <span class="lpb-arrow">›</span>
         </div>`;
     }
-
-    /* 개인화 토글 표시 + 데이터 로드 */
-    _completedIds = await fetchCompletedSessionIds(session.user_id);
-    const res = await buildPersonalizedSequence(session.user_id, lectureId);
-    _personalSequence = res.sequence;
-    _myGoals = res.myGoals;
-    _allGoals = res.allGoals;
+    if (bannerHtml) {
+      const bannerEl = document.getElementById('progressBanner');
+      bannerEl.style.display = 'block';
+      bannerEl.innerHTML = bannerHtml;
+    }
 
     if (_myGoals.length) {
       document.getElementById('personalBar').style.display = 'block';

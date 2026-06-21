@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>내 강의 — LangLearn MVP</title>
 <link rel="stylesheet" href="/styles.css">
+<style>
+  /* 필터 탭 */
+  .ml-filter-tabs { display: flex; gap: 6px; padding: 12px 16px 4px; }
+  .ml-filter-tab {
+    flex: 1; padding: 8px 4px; font-size: 12px; font-weight: 600;
+    border: 1.5px solid var(--border); border-radius: 20px; background: var(--surface);
+    color: var(--text-sub); cursor: pointer; text-align: center;
+  }
+  .ml-filter-tab.active { border-color: var(--primary); color: var(--primary); background: #e8f0fe; }
+</style>
 </head>
 <body>
 <div class="page">
@@ -14,13 +24,19 @@
 
 <script type="module">
 import { requireAuth } from '/js/auth-guard.js';
-import { fetchLectures, fetchUserLectureIds, fetchUserGoalProgress, fetchUserRoutine, setActiveLecture } from '/js/api.js';
+import { fetchLectures, fetchUserLectureIds, fetchUserGoalProgress, fetchUserRoutine, setActiveLecture, fetchLectureSummary } from '/js/api.js';
 import { renderTabbar } from '/js/tabbar.js';
 
 renderTabbar('my-lectures');
 const session = requireAuth();
 
 let currentActiveLectureId = null;
+let activeFilter = '진행중인 강의'; // 기본 탭
+
+// 강의 분류 결과 (loadData 후 채워짐)
+let classified = { '진행중인 강의': [], '역량완료 강의': [], '완강': [] };
+// 카드 표시용: 강의별 진행 중 역량 목록
+let lectureProgressMap = {};
 
 async function loadData() {
   const [allLectures, enrolledIds, allProgress, routine] = await Promise.all([
@@ -31,9 +47,9 @@ async function loadData() {
   ]);
 
   currentActiveLectureId = routine?.active_lecture_id || null;
+  const myLectures = allLectures.filter(l => enrolledIds.includes(l.id));
 
   const container = document.getElementById('myList');
-  const myLectures = allLectures.filter(l => enrolledIds.includes(l.id));
 
   if (!myLectures.length) {
     container.innerHTML = `
@@ -47,61 +63,119 @@ async function loadData() {
     return;
   }
 
-  /* 강의별 역량 진척 요약 */
-  const lectureProgress = {};
+  /* 카드 표시용: in_progress 역량만 */
+  lectureProgressMap = {};
   for (const p of (allProgress || [])) {
-    if (!lectureProgress[p.lecture_id]) lectureProgress[p.lecture_id] = [];
-    if (p.status === 'in_progress') lectureProgress[p.lecture_id].push(p);
+    if (!lectureProgressMap[p.lecture_id]) lectureProgressMap[p.lecture_id] = [];
+    if (p.status === 'in_progress') lectureProgressMap[p.lecture_id].push(p);
   }
 
-  container.innerHTML = myLectures.map(l => {
-    const progs = lectureProgress[l.id] || [];
-    const avgPct = progs.length
-      ? Math.round(progs.reduce((s, p) => s + Number(p.progress_pct), 0) / progs.length)
-      : 0;
-    const isActive = l.id === currentActiveLectureId;
+  /* 분류용: 강의별 전체 역량 (상태 무관) */
+  const allGoalsByLecture = {};
+  for (const p of (allProgress || [])) {
+    if (!allGoalsByLecture[p.lecture_id]) allGoalsByLecture[p.lecture_id] = [];
+    allGoalsByLecture[p.lecture_id].push(p);
+  }
 
-    const progressHtml = progs.length ? `
-      <div style="margin-top:8px;">
-        <div class="progress-label">
-          <span style="font-size:12px;color:var(--text-sub);">역량 ${progs.length}개 진행 중</span>
-          <span style="font-size:12px;color:var(--primary);font-weight:700;">${avgPct}%</span>
-        </div>
-        <div class="progress-bar" style="margin-top:4px;"><div class="progress-fill" style="width:${avgPct}%"></div></div>
-      </div>` : '';
+  /* 강의 전체 진행률 병렬 로드 (완강 판정) */
+  const summaries = await Promise.all(
+    myLectures.map(l => fetchLectureSummary(session.user_id, l.id).catch(() => ({ progress_pct: 0 })))
+  );
+  const summaryMap = {};
+  myLectures.forEach((l, i) => { summaryMap[l.id] = summaries[i]; });
 
-    return `
-      <div class="my-lecture-card${isActive ? ' is-active' : ''}" id="mlc_${l.id}">
-        <div class="my-lecture-card-inner" onclick="location.href='/lecture-detail.html?id=${l.id}'">
-          ${l.thumbnail_url
-            ? `<img class="my-lecture-card-thumb" src="${l.thumbnail_url}" alt="${l.title}" onerror="this.outerHTML='<div class=my-lecture-card-thumb-fallback>📚</div>'">`
-            : `<div class="my-lecture-card-thumb-fallback">📚</div>`}
-          <div class="my-lecture-card-body">
-            <div class="my-lecture-card-title">${l.title}</div>
-            <div class="my-lecture-card-sub">${l.instructor}</div>
-            ${progressHtml}
-          </div>
-        </div>
-        <div class="my-lecture-card-footer">
-          <div>
-            ${isActive
-              ? `<span class="focus-badge">● 지금 집중 중</span>`
-              : `<span style="font-size:12px;color:var(--text-sub);">집중 강의로 전환</span>`}
-          </div>
-          ${isActive
-            ? `<span style="font-size:12px;color:var(--text-sub);">홈 대시보드에 표시됩니다</span>`
-            : `<button class="focus-btn" onclick="switchFocus('${l.id}')">집중하기</button>`}
-        </div>
-      </div>`;
-  }).join('');
+  /* 분류 */
+  classified = { '진행중인 강의': [], '역량완료 강의': [], '완강': [] };
+  for (const l of myLectures) {
+    const summary = summaryMap[l.id] || {};
+    const myGoals = allGoalsByLecture[l.id] || [];
+    if (Number(summary.progress_pct) >= 100) {
+      // 강의 전체 세션 100% 완료 → 완강
+      classified['완강'].push(l);
+    } else if (myGoals.length > 0 && myGoals.every(g => Number(g.progress_pct) >= 100)) {
+      // 선택 역량 전부 달성, 강의 전체는 미완 → 역량완료 강의
+      classified['역량완료 강의'].push(l);
+    } else {
+      // 그 외 → 진행중인 강의
+      classified['진행중인 강의'].push(l);
+    }
+  }
+
+  renderAll(container);
 }
 
-/* 집중 강의 전환 */
+/** 필터 탭 + 카드 목록 렌더 */
+function renderAll(container) {
+  if (!container) container = document.getElementById('myList');
+
+  const tabs = ['진행중인 강의', '역량완료 강의', '완강'];
+  const tabsHtml = `
+    <div class="ml-filter-tabs">
+      ${tabs.map(t => `<button class="ml-filter-tab${t === activeFilter ? ' active' : ''}" onclick="setFilter('${t}')">${t}</button>`).join('')}
+    </div>`;
+
+  const list = classified[activeFilter] || [];
+  const cardsHtml = list.length
+    ? list.map(l => renderCard(l)).join('')
+    : `<div class="empty-state" style="padding:40px 16px;"><p>해당하는 강의가 없어요</p></div>`;
+
+  container.innerHTML = tabsHtml + cardsHtml;
+}
+
+/** 강의 카드 HTML 생성 */
+function renderCard(l) {
+  const progs = lectureProgressMap[l.id] || [];
+  const avgPct = progs.length
+    ? Math.round(progs.reduce((s, p) => s + Number(p.progress_pct), 0) / progs.length)
+    : 0;
+  const isActive = l.id === currentActiveLectureId;
+
+  const progressHtml = progs.length ? `
+    <div style="margin-top:8px;">
+      <div class="progress-label">
+        <span style="font-size:12px;color:var(--text-sub);">역량 ${progs.length}개 진행 중</span>
+        <span style="font-size:12px;color:var(--primary);font-weight:700;">${avgPct}%</span>
+      </div>
+      <div class="progress-bar" style="margin-top:4px;"><div class="progress-fill" style="width:${avgPct}%"></div></div>
+    </div>` : '';
+
+  return `
+    <div class="my-lecture-card${isActive ? ' is-active' : ''}" id="mlc_${l.id}">
+      <div class="my-lecture-card-inner" onclick="location.href='/lecture-detail.html?id=${l.id}'">
+        ${l.thumbnail_url
+          ? `<img class="my-lecture-card-thumb" src="${l.thumbnail_url}" alt="${l.title}" onerror="this.outerHTML='<div class=my-lecture-card-thumb-fallback>📚</div>'">`
+          : `<div class="my-lecture-card-thumb-fallback">📚</div>`}
+        <div class="my-lecture-card-body">
+          <div class="my-lecture-card-title">${l.title}</div>
+          <div class="my-lecture-card-sub">${l.instructor}</div>
+          ${progressHtml}
+        </div>
+      </div>
+      <div class="my-lecture-card-footer">
+        <div>
+          ${isActive
+            ? `<span class="focus-badge">● 지금 집중 중</span>`
+            : `<span style="font-size:12px;color:var(--text-sub);">집중 강의로 전환</span>`}
+        </div>
+        ${isActive
+          ? `<span style="font-size:12px;color:var(--text-sub);">홈 대시보드에 표시됩니다</span>`
+          : `<button class="focus-btn" onclick="switchFocus('${l.id}')">집중하기</button>`}
+      </div>
+    </div>`;
+}
+
+/** 탭 전환 */
+window.setFilter = function(filter) {
+  activeFilter = filter;
+  renderAll();
+};
+
+/** 집중 강의 전환 */
 window.switchFocus = async function(lectureId) {
   try {
     await setActiveLecture(session.user_id, lectureId);
     showToast('집중 강의가 변경되었습니다');
-    await loadData(); // 목록 갱신
+    await loadData();
   } catch (e) {
     alert('변경 실패: ' + e.message);
   }

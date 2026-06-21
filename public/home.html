@@ -140,34 +140,40 @@ async function render() {
 
   let html = '';
 
-  /* ── 0. 코치 말풍선 (coachKey가 설정된 경우만) ── */
-  if (coachKey && inProgress.length) {
-    try {
-      const templates = await fetchCoachTemplates(coachKey);
-      if (templates.length) {
-        const hero = inProgress[0];
-        const remaining = hero.total_sessions - hero.completed_sessions;
-        const tpl = templates[Math.floor(Math.random() * templates.length)];
-        const msg = fillTemplate(tpl.template, {
-          goal: hero.goal_title,
-          remaining,
-          plan: planMap[activeLectureId] || hero.goal_title,
-          purpose: hero.purpose_category
-        });
-        // 코치 이모지 매핑
-        const emojiMap = { warm: '🌱', strict: '🔥', friend: '🙌', system: '🤖' };
-        const nameMap = { warm: '따뜻한 응원형', strict: '엄격한 코치', friend: '친구같은 코치', system: '시스템' };
-        html += `
-          <div class="coach-bubble">
-            <div class="coach-bubble-avatar">${emojiMap[coachKey] || '🤖'}</div>
-            <div class="coach-bubble-body">
-              <div class="coach-bubble-name">${nameMap[coachKey] || '코치'}</div>
-              <div class="coach-bubble-msg">${msg}</div>
-            </div>
-            <button class="coach-gear-btn" id="_coachGearBtn" title="코치 설정">⚙️</button>
-          </div>`;
-      }
-    } catch {}
+  /* ── 0. 코치 말풍선 (항상 표시, 코치 설정 여부에 따라 내용 달라짐) ── */
+  if (inProgress.length) {
+    const emojiMap = { warm: '🌱', strict: '🔥', friend: '🙌', system: '🤖' };
+    const nameMap  = { warm: '따뜻한 응원형', strict: '엄격한 코치', friend: '친구같은 코치', system: '시스템' };
+    let coachAvatar = '🧭';
+    let coachName   = '코치 미설정';
+    let coachMsg    = '코치를 설정하면 매일 맞춤 응원을 받을 수 있어요';
+    if (coachKey) {
+      try {
+        const templates = await fetchCoachTemplates(coachKey);
+        if (templates.length) {
+          const hero = inProgress[0];
+          const remaining = hero.total_sessions - hero.completed_sessions;
+          const tpl = templates[Math.floor(Math.random() * templates.length)];
+          coachMsg    = fillTemplate(tpl.template, {
+            goal: hero.goal_title,
+            remaining,
+            plan: planMap[activeLectureId] || hero.goal_title,
+            purpose: hero.purpose_category
+          });
+          coachAvatar = emojiMap[coachKey] || '🤖';
+          coachName   = nameMap[coachKey] || '코치';
+        }
+      } catch {}
+    }
+    html += `
+      <div class="coach-bubble">
+        <div class="coach-bubble-avatar">${coachAvatar}</div>
+        <div class="coach-bubble-body">
+          <div class="coach-bubble-name">${coachName}</div>
+          <div class="coach-bubble-msg">${coachMsg}</div>
+        </div>
+        <button class="coach-gear-btn" id="_coachGearBtn" title="코치 설정">⚙️</button>
+      </div>`;
   }
 
   /* ── 1. 집중 강의 헤더 ── */
