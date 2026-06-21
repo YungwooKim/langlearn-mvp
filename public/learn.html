@@ -194,10 +194,10 @@ function renderNavBtns() {
   const wrap = document.getElementById('sessionNavBtns');
   wrap.innerHTML = `
     <button class="session-nav-btn prev" ${prev ? `onclick="location.href='/learn.html?session=${prev.id}&lecture=${lectureId}'"` : 'disabled'}>
-      ← ${prev ? prev.title.length > 14 ? prev.title.slice(0, 14) + '…' : prev.title : '이전 강의 없음'}
+      ← 이전
     </button>
     <button class="session-nav-btn next" ${next ? `onclick="location.href='/learn.html?session=${next.id}&lecture=${lectureId}'"` : 'disabled'}>
-      ${next ? next.title.length > 14 ? next.title.slice(0, 14) + '…' : next.title : '다음 강의 없음'} →
+      다음 →
     </button>`;
 }
 
