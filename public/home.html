@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>홈 — LangLearn MVP</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .greeting { padding: 16px 16px 4px; }
+  .greeting-name { font-size: 18px; font-weight: 800; }
+  .greeting-sub  { font-size: 13px; color: var(--text-sub); margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-header"><h1>🌐 LangLearn</h1></div>
+
+  <div class="greeting">
+    <div class="greeting-name" id="greetName">안녕하세요!</div>
+    <div class="greeting-sub">오늘도 영어 실력을 키워볼까요?</div>
+  </div>
+
+  <div id="mainContent"><div class="empty-state"><div class="spinner"></div></div></div>
+</div>
+
+<script type="module">
+import { requireAuth } from '/js/auth-guard.js';
+import {
+  fetchUserGoalProgress, fetchUserPlans, fetchLectures,
+  fetchUserRoutine, fetchLectureSummary, fetchNotificationSettings,
+  fetchCoachTemplates, fetchTodayStudy, fetchGoalOutcomes,
+  fillTemplate, setActiveLecture
+} from '/js/api.js';
+import { openTimeGoalModal, summarizeStudyMinutes, calcEtaDays } from '/js/time-goal-modal.js';
+import { openNotificationModal } from '/js/notification-modal.js';
+import { renderTabbar } from '/js/tabbar.js';
+
+renderTabbar('home');
+const session = requireAuth();
+document.getElementById('greetName').textContent = `${session.nickname}님, 안녕하세요!`;
+
+/** 집중 강의 ID 결정: routine > 폴백(최근 설정) */
+function resolveActiveLectureId(routine, goals) {
+  if (routine?.active_lecture_id) {
+    const hasGoals = (goals || []).some(g => g.lecture_id === routine.active_lecture_id);
+    if (hasGoals) return routine.active_lecture_id;
+  }
+  const inProgress = (goals || []).filter(g => g.status === 'in_progress');
+  return inProgress[0]?.lecture_id || null;
+}
+
+/** KST 오늘 요일 키 (월~일) */
+function getTodayDayKey() {
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  return days[d.getDay()];
+}
+
+async function render() {
+  const [goals, plans, lectures, routine, notiSettings] = await Promise.all([
+    fetchUserGoalProgress(session.user_id),
+    fetchUserPlans(session.user_id),
+    fetchLectures(),
+    fetchUserRoutine(session.user_id),
+    fetchNotificationSettings(session.user_id)
+  ]);
+
+  const container = document.getElementById('mainContent');
+  const lectureMap = Object.fromEntries(lectures.map(l => [l.id, l]));
+  const planMap   = Object.fromEntries(plans.map(p => [p.lecture_id, p.label]));
+
+  if (!goals || goals.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📖</div>
+        <p>아직 등록한 역량이 없어요.<br>강의목록에서 역량을 선택해보세요!</p>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <a href="/lectures.html" class="btn btn-primary">강의 둘러보기</a>
+      </div>`;
+    return;
+  }
+
+  /* 집중 강의 결정 */
+  const activeLectureId = resolveActiveLectureId(routine, goals);
+  if (!activeLectureId) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📖</div>
+        <p>강의에서 역량을 선택해보세요!</p>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <a href="/lectures.html" class="btn btn-primary">강의 둘러보기</a>
+      </div>`;
+    return;
+  }
+
+  /* routine에 active가 없으면 DB에 자동 저장 */
+  if (!routine?.active_lecture_id) {
+    setActiveLecture(session.user_id, activeLectureId).catch(() => {});
+  }
+
+  /* 강의 스코프 역량 필터 */
+  const activeGoals = (goals || []).filter(g => g.lecture_id === activeLectureId);
+  const inProgress  = activeGoals.filter(g => g.status === 'in_progress' && Number(g.progress_pct) < 100);
+  const completed   = activeGoals.filter(g => Number(g.progress_pct) >= 100 || g.status === 'completed');
+
+  /* 강의 요약 + 오늘 학습량 병렬 로드 */
+  const [summary, todayStudy] = await Promise.all([
+    fetchLectureSummary(session.user_id, activeLectureId),
+    fetchTodayStudy(session.user_id)
+  ]);
+
+  /* 역량 실사례 로드 */
+  const inProgressGoalIds = inProgress.map(g => g.goal_id);
+  const outcomes = inProgressGoalIds.length ? await fetchGoalOutcomes(inProgressGoalIds) : [];
+  const outcomeMap = {};
+  for (const o of outcomes) {
+    if (!outcomeMap[o.goal_id]) outcomeMap[o.goal_id] = [];
+    outcomeMap[o.goal_id].push(o.outcome);
+  }
+
+  const activeLecture = lectureMap[activeLectureId];
+  const studyMinutes  = routine?.study_minutes;
+  const coachKey      = routine?.coach_key || null;
+
+  let html = '';
+
+  /* ── 0. 코치 말풍선 (coachKey가 설정된 경우만) ── */
+  if (coachKey && inProgress.length) {
+    try {
+      const templates = await fetchCoachTemplates(coachKey);
+      if (templates.length) {
+        const hero = inProgress[0];
+        const remaining = hero.total_sessions - hero.completed_sessions;
+        const tpl = templates[Math.floor(Math.random() * templates.length)];
+        const msg = fillTemplate(tpl.template, {
+          goal: hero.goal_title,
+          remaining,
+          plan: planMap[activeLectureId] || hero.goal_title,
+          purpose: hero.purpose_category
+        });
+        // 코치 이모지 매핑
+        const emojiMap = { warm: '🌱', strict: '🔥', friend: '🙌', system: '🤖' };
+        const nameMap = { warm: '따뜻한 응원형', strict: '엄격한 코치', friend: '친구같은 코치', system: '시스템' };
+        html += `
+          <div class="coach-bubble">
+            <div class="coach-bubble-avatar">${emojiMap[coachKey] || '🤖'}</div>
+            <div class="coach-bubble-body">
+              <div class="coach-bubble-name">${nameMap[coachKey] || '코치'}</div>
+              <div class="coach-bubble-msg">${msg}</div>
+            </div>
+          </div>`;
+      }
+    } catch {}
+  }
+
+  /* ── 1. 집중 강의 헤더 ── */
+  html += `
+    <div class="focus-lecture-header" onclick="location.href='/lecture-detail.html?id=${activeLectureId}'" style="cursor:pointer;">
+      ${activeLecture?.thumbnail_url
+        ? `<img class="focus-lecture-thumb" src="${activeLecture.thumbnail_url}" alt="" onerror="this.outerHTML='<div class=focus-lecture-thumb-fallback>📚</div>'">`
+        : `<div class="focus-lecture-thumb-fallback">📚</div>`}
+      <div class="focus-lecture-info">
+        <div class="focus-lecture-label">집중 중</div>
+        <div class="focus-lecture-title">${activeLecture?.title || '강의'}</div>
+        <div class="focus-lecture-inst">${activeLecture?.instructor || ''}</div>
+      </div>
+      <a class="focus-lecture-switch" href="/my-lectures.html" onclick="event.stopPropagation()">다른 강의 →</a>
+    </div>`;
+
+  /* ── 2. 히어로 카드 (sort_order 1번) ── */
+  if (inProgress.length) {
+    const hero = inProgress[0];
+    const remaining = hero.total_sessions - hero.completed_sessions;
+    html += `
+      <div class="hero-card">
+        <div class="hero-card-sub">앞으로 ${remaining}강만 더 들으면</div>
+        <div class="hero-card-title">«${hero.goal_title}» 완성! 🎯</div>
+        <div class="hero-card-meta">${hero.purpose_category}</div>
+        <a href="/lecture-detail.html?id=${activeLectureId}" class="hero-card-btn">이어서 학습하기 →</a>
+      </div>`;
+  }
+
+  /* ── 3. 오늘의 학습량 카드 ── */
+  const todayDayKey = getTodayDayKey();
+  const todayGoalMin = studyMinutes ? (Number(studyMinutes[todayDayKey]) || 0) : 0;
+  const todayDoneMin = Math.round(Number(todayStudy.completed_minutes_today) || 0);
+  const todayPct = todayGoalMin > 0 ? Math.min(100, Math.round((todayDoneMin / todayGoalMin) * 100)) : 0;
+  html += `<div class="today-study">
+    <div class="today-study-header">
+      <div class="today-study-label">📚 오늘의 학습량</div>
+      <div class="today-study-pct">${todayGoalMin > 0 ? `${todayPct}%` : '-'}</div>
+    </div>
+    <div class="today-study-bar">
+      <div class="today-study-fill" style="width:${todayPct}%;"></div>
+    </div>
+    <div class="today-study-sub">
+      ${todayGoalMin > 0
+        ? `${todayDoneMin}분 완료 / 오늘 목표 ${todayGoalMin}분${todayPct >= 100 ? ' ✅ 달성!' : ''}`
+        : `${todayDoneMin > 0 ? `오늘 ${todayDoneMin}분 학습했어요` : '오늘 아직 학습 기록이 없어요'} · <span style="color:var(--primary);cursor:pointer;" onclick="document.getElementById('_routineChip')?.click()">학습시간 목표 설정 →</span>`}
+    </div>
+  </div>`;
+
+  /* ── 4. compact 루틴 + 알림 칩 ── */
+  const weeklySum = studyMinutes
+    ? Object.values(studyMinutes).reduce((s, m) => s + (Number(m) || 0), 0)
+    : 0;
+  const remainingMin = Number(summary.total_minutes) - Number(summary.completed_minutes);
+  const etaDays = weeklySum > 0 && inProgress.length ? calcEtaDays(remainingMin, studyMinutes) : null;
+
+  let routineValue = studyMinutes && weeklySum
+    ? summarizeStudyMinutes(studyMinutes) + (etaDays ? ` · ~${etaDays}일` : '')
+    : '목표 미설정';
+  let notiValue = notiSettings?.enabled
+    ? `${(notiSettings.days || []).join(' ')} ${(notiSettings.send_time || '').slice(0, 5)}`
+    : notiSettings ? '알림 꺼짐' : '설정 안 됨';
+
+  html += `
+    <div class="routine-noti-row">
+      <div class="routine-chip" id="_routineChip">
+        <div class="routine-chip-label">📅 학습 루틴</div>
+        <div class="routine-chip-value">${routineValue} ›</div>
+      </div>
+      <div class="noti-chip" id="_notiChip">
+        <div class="noti-chip-label">🔔 알림</div>
+        <div class="noti-chip-value">${notiValue} ›</div>
+      </div>
+    </div>`;
+
+  /* ── 5. 나의 목표 배너 ── */
+  const planLabel = planMap[activeLectureId];
+  if (planLabel) {
+    html += `<div class="plan-banner">🎯 나의 목표: ${planLabel}</div>`;
+  }
+
+  /* ── 6. 강의 전체 진행률 ── */
+  const ovPct = Number(summary.progress_pct) || 0;
+  html += `
+    <div class="overall-section">
+      <div class="overall-label">
+        <span>강의 전체 진행</span>
+        <span class="overall-pct">${ovPct}%</span>
+      </div>
+      <div class="progress-bar" style="height:10px;">
+        <div class="progress-fill" style="width:${ovPct}%;height:100%;border-radius:5px;"></div>
+      </div>
+      <div style="font-size:12px;color:var(--text-sub);margin-top:5px;">
+        ${summary.completed_sessions}강 완료 / 전체 ${summary.total_sessions}강
+      </div>
+    </div>`;
+
+  /* ── 7. 내가 선택한 목표 역량 (막대 차트 + 실사례) ── */
+  if (inProgress.length) {
+    html += `<div class="skill-bar-section">
+      <div class="skill-bar-section-label">내가 선택한 목표 역량</div>`;
+    for (const g of inProgress) {
+      const pct = Number(g.progress_pct) || 0;
+      const goalOutcomes = outcomeMap[g.goal_id] || [];
+      html += `
+        <div class="skill-bar-item">
+          <div class="skill-bar-header">
+            <div class="skill-bar-name">${g.goal_title}</div>
+            <div class="skill-bar-pct">${pct}%</div>
+          </div>
+          <div class="skill-bar-sub">${g.completed_sessions}강 완료 / 전체 ${g.total_sessions}강</div>
+          <div class="skill-bar-track">
+            <div class="skill-bar-fill" style="width:${pct}%"></div>
+          </div>
+          ${goalOutcomes.map(o => `<div class="skill-outcome">${o}</div>`).join('')}
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  /* ── 8. 완수 역량 아코디언 ── */
+  if (completed.length) {
+    html += `
+      <details class="completed-accordion">
+        <summary>완수한 역량 ${completed.length}개</summary>
+        ${completed.map(g => `
+          <div class="completed-item">
+            <div>
+              <div class="completed-item-name">${g.goal_title}</div>
+              <div class="completed-item-sub">${g.purpose_category}</div>
+            </div>
+            <span class="badge badge-green">완료</span>
+          </div>`).join('')}
+      </details>`;
+  }
+
+  container.innerHTML = html;
+
+  /* 루틴 칩 클릭 → 학습시간 모달 */
+  document.getElementById('_routineChip')?.addEventListener('click', () => {
+    openTimeGoalModal({
+      userId: session.user_id,
+      onSaved: () => { showToast('학습 루틴이 저장되었습니다'); render(); }
+    });
+  });
+
+  /* 알림 칩 클릭 → 알림 모달 */
+  document.getElementById('_notiChip')?.addEventListener('click', () => {
+    openNotificationModal({
+      userId: session.user_id,
+      onSaved: () => { showToast('알림 설정이 저장되었습니다'); render(); }
+    });
+  });
+}
+
+function showToast(msg) {
+  let t = document.querySelector('.toast');
+  if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+render().catch(err => {
+  document.getElementById('mainContent').innerHTML =
+    `<div class="empty-state"><p>데이터를 불러오지 못했습니다<br>${err.message}</p></div>`;
+});
+</script>
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>강의 상세 — LangLearn MVP</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .lecture-hero { background: #1a1a2e; color: #fff; }
+  .lecture-hero-body { padding: 20px 16px; }
+  .lecture-hero h2 { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+  .lecture-hero .instructor { font-size: 14px; opacity: .75; }
+  .lecture-desc { font-size: 14px; opacity: .85; margin-top: 10px; line-height: 1.6; }
+
+  /* 개인화 토글 바 */
+  .personal-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .personal-bar label { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .personal-bar-desc { font-size: 12px; color: var(--text-sub); margin-left: auto; }
+
+  /* 섹션/세션 */
+  .section-block { margin-bottom: 4px; }
+  .section-title-row { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--bg); }
+  .section-title-text { font-size: 13px; font-weight: 700; flex: 1; }
+  .section-goal-badge { font-size: 11px; font-weight: 700; color: var(--primary); background: #e8f0fe; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+  .section-order-badge { font-size: 11px; font-weight: 700; color: #fff; background: var(--primary); width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+  .session-row { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .session-row:last-child { border-bottom: none; }
+  .session-no   { font-size: 12px; color: var(--text-sub); width: 20px; text-align: center; flex-shrink: 0; }
+  .session-info { flex: 1; min-width: 0; }
+  .session-title{ font-size: 14px; font-weight: 500; }
+  .session-dur  { font-size: 12px; color: var(--text-sub); margin-top: 2px; }
+  .session-done { font-size: 14px; color: var(--success); flex-shrink: 0; }
+
+  .sticky-cta { position: sticky; bottom: calc(var(--tab-h) + 8px); padding: 12px 16px; background: var(--surface); border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-header">
+    <button class="back-btn" onclick="history.back()">←</button>
+    <h1 id="pageTitle">강의 상세</h1>
+  </div>
+
+  <div id="lectureHero"></div>
+  <div id="progressBanner" style="display:none"></div>
+  <div id="personalBar" style="display:none">
+    <div class="personal-bar">
+      <label>
+        <input type="checkbox" id="personalToggle" checked>
+        내가 선택한 역량만 보기
+      </label>
+      <span class="personal-bar-desc" id="personalDesc"></span>
+    </div>
+  </div>
+  <div id="curriculumList"><div class="empty-state"><div class="spinner"></div></div></div>
+  <div class="sticky-cta" id="ctaArea" style="display:none"></div>
+</div>
+
+<!-- 등록 컨펌 팝업 -->
+<div class="popup-backdrop hidden" id="confirmPopup">
+  <div class="popup-box">
+    <div class="popup-title">이 강의를 등록할까요?</div>
+    <div class="popup-body">등록 후 역량 목표를 선택하면 나만의 학습 경로가 만들어집니다.</div>
+    <div class="popup-actions">
+      <button class="btn btn-outline" onclick="closePopup()">취소</button>
+      <button class="btn btn-primary" onclick="goToGoalSetup()">역량 선택하기</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { requireAuth } from '/js/auth-guard.js';
+import {
+  fetchLectureDetail, fetchUserLectureIds, fetchUserGoalProgress,
+  fetchCompletedSessionIds, buildPersonalizedSequence
+} from '/js/api.js';
+import { renderTabbar } from '/js/tabbar.js';
+
+renderTabbar('lectures');
+const session = requireAuth();
+const params    = new URLSearchParams(location.search);
+const lectureId = params.get('id');
+if (!lectureId) location.replace('/lectures.html');
+
+function formatDur(sec) { return `${Math.floor(sec / 60)}분`; }
+
+let _detail = null;
+let _isEnrolled = false;
+let _completedIds = [];
+let _personalSequence = [];
+let _myGoals = [];
+let _allGoals = [];
+
+async function load() {
+  const [detail, enrolledIds, allProgress] = await Promise.all([
+    fetchLectureDetail(lectureId),
+    fetchUserLectureIds(session.user_id),
+    fetchUserGoalProgress(session.user_id)
+  ]);
+
+  _detail = detail;
+  _isEnrolled = enrolledIds.includes(lectureId);
+  const lec = detail.lecture;
+  document.getElementById('pageTitle').textContent = lec.title;
+
+  /* 히어로 영역 */
+  document.getElementById('lectureHero').innerHTML = `
+    <div class="lecture-hero">
+      ${lec.thumbnail_url
+        ? `<img class="lecture-hero-img" src="${lec.thumbnail_url}" alt="${lec.title}" onerror="this.style.display='none'">`
+        : ''}
+      <div class="lecture-hero-body">
+        <h2>${lec.title}</h2>
+        <div class="instructor">${lec.instructor}</div>
+        <div class="lecture-desc">${lec.description || ''}</div>
+      </div>
+    </div>`;
+
+  /* 역량 진행 배너 */
+  if (_isEnrolled) {
+    const lectureGoals = (allProgress || []).filter(p => p.lecture_id === lectureId && p.status === 'in_progress');
+    if (lectureGoals.length) {
+      const avgPct = Math.round(lectureGoals.reduce((s, g) => s + Number(g.progress_pct), 0) / lectureGoals.length);
+      const bannerEl = document.getElementById('progressBanner');
+      bannerEl.style.display = 'block';
+      bannerEl.innerHTML = `
+        <div class="lecture-progress-banner" onclick="location.href='/status.html?lecture=${lectureId}'">
+          <div class="lpb-left">
+            <div class="lpb-title">내 역량 진행 현황</div>
+            <div class="lpb-sub">역량 ${lectureGoals.length}개 · 평균 ${avgPct}% 달성 중</div>
+          </div>
+          <span class="lpb-arrow">›</span>
+        </div>`;
+    }
+
+    /* 개인화 토글 표시 + 데이터 로드 */
+    _completedIds = await fetchCompletedSessionIds(session.user_id);
+    const res = await buildPersonalizedSequence(session.user_id, lectureId);
+    _personalSequence = res.sequence;
+    _myGoals = res.myGoals;
+    _allGoals = res.allGoals;
+
+    if (_myGoals.length) {
+      document.getElementById('personalBar').style.display = 'block';
+      document.getElementById('personalDesc').textContent = `역량 ${_myGoals.length}개 선택됨`;
+      document.getElementById('personalToggle').addEventListener('change', renderCurriculum);
+    }
+  }
+
+  /* CTA 버튼 */
+  const cta = document.getElementById('ctaArea');
+  cta.style.display = 'block';
+  if (_isEnrolled) {
+    cta.innerHTML = `<a href="/goal-setup.html?lecture=${lectureId}" class="btn btn-outline">역량 수정하기</a>`;
+  } else {
+    cta.innerHTML = `<button class="btn btn-primary" onclick="document.getElementById('confirmPopup').classList.remove('hidden')">이 강의 등록하기</button>`;
+  }
+
+  renderCurriculum();
+}
+
+function renderCurriculum() {
+  const personalized = _isEnrolled && _myGoals.length && document.getElementById('personalToggle')?.checked;
+  const list = document.getElementById('curriculumList');
+
+  if (personalized) {
+    renderPersonalized(list);
+  } else {
+    renderFull(list);
+  }
+}
+
+/** 개인화 뷰: sort_order 기반 섹션 순서, 선택 역량 세션만 */
+function renderPersonalized(list) {
+  // 섹션 순서: sequence에서 처음 나타나는 순서
+  const sectionOrder = [];
+  const sectionGoalMap = {}; // sectionId → goalTitle (처음 매핑된 역량)
+  const sectionSeen = new Set();
+
+  for (const s of _personalSequence) {
+    if (!sectionSeen.has(s.sectionId)) {
+      sectionSeen.add(s.sectionId);
+      sectionOrder.push(s.sectionId);
+      sectionGoalMap[s.sectionId] = s.goalTitle;
+    }
+  }
+
+  // 개인화 세션 집합
+  const personalSet = new Set(_personalSequence.map(s => s.id));
+
+  // 섹션별 세션 (개인화 것만)
+  const sectionSessionMap = {}; // sectionId → sessions[]
+  for (const sec of (_detail.sections || [])) {
+    sectionSessionMap[sec.id] = sec;
+  }
+
+  const totalPersonal = _personalSequence.length;
+  const completedPersonal = _personalSequence.filter(s => _completedIds.includes(s.id)).length;
+
+  let html = `<div style="padding:10px 16px 4px;font-size:13px;color:var(--text-sub);">
+    내 역량 순서 · ${sectionOrder.length}섹션 · ${totalPersonal}강
+    <span style="color:var(--primary);margin-left:8px;">✅ ${completedPersonal}강 완료</span>
+  </div>`;
+
+  sectionOrder.forEach((sectionId, idx) => {
+    const sec = sectionSessionMap[sectionId];
+    if (!sec) return;
+    const personalSessions = (sec.sessions || []).filter(s => personalSet.has(s.id));
+    if (!personalSessions.length) return;
+
+    html += `<div class="section-block">
+      <div class="section-title-row">
+        <div class="section-order-badge">${idx + 1}</div>
+        <div class="section-title-text">${sec.title}</div>
+        <div class="section-goal-badge">${sectionGoalMap[sectionId] || ''}</div>
+      </div>`;
+
+    for (const s of personalSessions) {
+      const done = _completedIds.includes(s.id);
+      html += `<div class="session-row${done ? ' style="opacity:.7"' : ''}">
+        <span class="session-no">${s.order_no}</span>
+        <div class="session-info">
+          <div class="session-title">${s.title}</div>
+          <div class="session-dur">${formatDur(s.duration_sec)}</div>
+        </div>
+        ${done ? '<span class="session-done">✅</span>' : ''}
+        <a href="/learn.html?session=${s.id}&lecture=${lectureId}" style="font-size:12px;color:var(--primary);white-space:nowrap;">▶ ${done ? '다시보기' : '수강'}</a>
+      </div>`;
+    }
+    html += `</div>`;
+  });
+
+  list.innerHTML = html;
+}
+
+/** 전체 뷰: 기존 순서 */
+function renderFull(list) {
+  const totalSessions = _detail.sections.reduce((s, sec) => s + sec.sessions.length, 0);
+  let html = `<div style="padding:12px 16px 4px;font-size:14px;color:var(--text-sub);">전체 ${_detail.sections.length}섹션 · ${totalSessions}강</div>`;
+
+  for (const sec of _detail.sections) {
+    html += `<div class="section-block">
+      <div class="section-title-row">
+        <div class="section-title-text">📂 ${sec.title}</div>
+      </div>`;
+    for (const s of sec.sessions) {
+      const done = _completedIds.includes(s.id);
+      html += `<div class="session-row">
+        <span class="session-no">${s.order_no}</span>
+        <div class="session-info">
+          <div class="session-title">${s.title}</div>
+          <div class="session-dur">${formatDur(s.duration_sec)}</div>
+        </div>
+        ${done ? '<span class="session-done">✅</span>' : ''}
+        ${_isEnrolled ? `<a href="/learn.html?session=${s.id}&lecture=${lectureId}" style="font-size:12px;color:var(--primary);">▶ ${done ? '다시보기' : '수강'}</a>` : ''}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+  list.innerHTML = html;
+}
+
+window.closePopup   = () => document.getElementById('confirmPopup').classList.add('hidden');
+window.goToGoalSetup = () => location.href = `/goal-setup.html?lecture=${lectureId}`;
+
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>로그인 — LangLearn MVP</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .login-wrap { max-width: 480px; margin: 0 auto; min-height: 100vh; background: #fff; display: flex; flex-direction: column; justify-content: center; padding: 40px 24px; }
+  .login-logo { text-align: center; margin-bottom: 40px; }
+  .login-logo .logo-icon { font-size: 52px; margin-bottom: 8px; }
+  .login-logo h1 { font-size: 22px; font-weight: 800; color: var(--primary); }
+  .login-logo p  { font-size: 14px; color: var(--text-sub); margin-top: 4px; }
+  .pin-input { display: flex; gap: 8px; justify-content: center; margin: 8px 0; }
+  .pin-digit { width: 44px; height: 54px; text-align: center; font-size: 22px; font-weight: 700; border: 1.5px solid var(--border); border-radius: 8px; outline: none; }
+  .pin-digit:focus { border-color: var(--primary); }
+  .error-msg { color: var(--danger); font-size: 14px; text-align: center; margin-top: 8px; min-height: 20px; }
+  .notice { font-size: 13px; color: var(--text-sub); text-align: center; margin-top: 16px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-logo">
+    <div class="logo-icon">🌐</div>
+    <h1>LangLearn</h1>
+    <p>역량 기반 영어 학습 MVP</p>
+  </div>
+
+  <form id="loginForm">
+    <div class="form-group">
+      <label for="nickname">닉네임</label>
+      <input type="text" id="nickname" placeholder="사용할 닉네임 입력" autocomplete="username" maxlength="20">
+    </div>
+
+    <div class="form-group">
+      <label>핀번호 6자리</label>
+      <div class="pin-input" id="pinWrap">
+        <input class="pin-digit" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="pin-digit" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="pin-digit" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="pin-digit" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="pin-digit" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="pin-digit" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+      </div>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <button type="submit" class="btn btn-primary" id="submitBtn">시작하기</button>
+  </form>
+
+  <p class="notice">처음 입력하는 닉네임+핀은 자동으로 계정이 만들어집니다.<br>같은 닉네임으로 다른 기기에서도 로그인 가능합니다.</p>
+</div>
+
+<!-- OneSignal SDK -->
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+
+<script type="module">
+import { redirectIfLoggedIn, setSession } from '/js/auth-guard.js';
+import { authLogin } from '/js/api.js';
+import { ONESIGNAL_APP_ID } from '/js/supabase-client.js';
+
+// 이미 로그인 시 홈으로
+redirectIfLoggedIn();
+
+// OneSignal 초기화
+window.OneSignalDeferred = window.OneSignalDeferred || [];
+OneSignalDeferred.push(async (OneSignal) => {
+  await OneSignal.init({ appId: ONESIGNAL_APP_ID });
+});
+
+// 핀 입력 자동 포커스 이동
+const pinDigits = document.querySelectorAll('.pin-digit');
+pinDigits.forEach((input, i) => {
+  input.addEventListener('input', () => {
+    input.value = input.value.replace(/\D/g, '');
+    if (input.value && i < pinDigits.length - 1) pinDigits[i + 1].focus();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace' && !input.value && i > 0) pinDigits[i - 1].focus();
+  });
+});
+
+// 폼 제출
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nickname = document.getElementById('nickname').value.trim();
+  const pin = Array.from(pinDigits).map(d => d.value).join('');
+  const errEl = document.getElementById('errorMsg');
+  const btn = document.getElementById('submitBtn');
+
+  errEl.textContent = '';
+  if (!nickname) { errEl.textContent = '닉네임을 입력해주세요'; return; }
+  if (pin.length !== 6) { errEl.textContent = '핀번호 6자리를 모두 입력해주세요'; return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    const result = await authLogin(nickname, pin);
+    setSession({ user_id: result.user_id, nickname: result.nickname });
+
+    // OneSignal 유저 연결
+    await new Promise(resolve => {
+      OneSignalDeferred.push(async (OneSignal) => {
+        try { await OneSignal.login(result.user_id); } catch {}
+        resolve();
+      });
+    });
+
+    location.replace('/home.html');
+  } catch (err) {
+    errEl.textContent = err.message || '오류가 발생했습니다';
+    btn.disabled = false;
+    btn.textContent = '시작하기';
+  }
+});
+</script>
+</body>
+</html>

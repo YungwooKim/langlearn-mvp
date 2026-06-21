@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>역량 현황 — LangLearn MVP</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="page">
+  <div class="page-header">
+    <button class="back-btn" onclick="history.back()">←</button>
+    <h1>역량 현황</h1>
+  </div>
+
+  <div id="statusArea"><div class="empty-state"><div class="spinner"></div></div></div>
+</div>
+
+<script type="module">
+import { requireAuth } from '/js/auth-guard.js';
+import { fetchUserGoalProgress, fetchLectures, buildPersonalizedSequence, fetchCompletedSessionIds } from '/js/api.js';
+import { renderTabbar } from '/js/tabbar.js';
+
+renderTabbar('my-lectures');
+const session = requireAuth();
+const lectureId = new URLSearchParams(location.search).get('lecture');
+
+async function load() {
+  const [allProgress, lectures, seqResult, completedIds] = await Promise.all([
+    fetchUserGoalProgress(session.user_id),
+    fetchLectures(),
+    lectureId ? buildPersonalizedSequence(session.user_id, lectureId) : Promise.resolve({ sequence: [] }),
+    fetchCompletedSessionIds(session.user_id)
+  ]);
+
+  // 다음 수강 세션: 개인화 순서에서 아직 완료하지 않은 첫 번째
+  const nextSession = (seqResult.sequence || []).find(s => !completedIds.includes(s.id));
+
+  const container = document.getElementById('statusArea');
+  const lecture = lectures.find(l => l.id === lectureId);
+  const goals = (allProgress || []).filter(p => p.lecture_id === lectureId);
+
+  if (!goals.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📊</div>
+        <p>등록된 역량이 없어요.<br>강의 상세에서 역량을 선택해보세요!</p>
+      </div>`;
+    return;
+  }
+
+  // 강의 헤더
+  let html = '';
+  if (lecture) {
+    html += `
+      <div style="padding:16px 16px 8px;">
+        <div style="font-size:18px;font-weight:800;">${lecture.title}</div>
+        <div style="font-size:13px;color:var(--text-sub);margin-top:2px;">${lecture.instructor}</div>
+      </div>`;
+  }
+
+  // 전체 요약
+  const totalGoals = goals.length;
+  const inProgress = goals.filter(g => g.status === 'in_progress').length;
+  const completed = goals.filter(g => Number(g.progress_pct) >= 100).length;
+  html += `
+    <div style="display:flex;gap:12px;padding:8px 16px 16px;">
+      <div style="flex:1;background:var(--bg);border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:22px;font-weight:800;color:var(--primary);">${totalGoals}</div>
+        <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">전체 역량</div>
+      </div>
+      <div style="flex:1;background:var(--bg);border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:22px;font-weight:800;color:var(--primary);">${inProgress}</div>
+        <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">진행 중</div>
+      </div>
+      <div style="flex:1;background:var(--bg);border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:22px;font-weight:800;color:var(--success);">${completed}</div>
+        <div style="font-size:12px;color:var(--text-sub);margin-top:2px;">완료</div>
+      </div>
+    </div>`;
+
+  // 역량별 카드 (sort_order 기준)
+  const sorted = [...goals].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  for (const g of sorted) {
+    const pct = Number(g.progress_pct) || 0;
+    const remaining = g.total_sessions - g.completed_sessions;
+    const statusLabel = pct >= 100 ? '완료 ✅' : g.status === 'paused' ? '보류 ⏸' : '진행 중';
+    html += `
+      <div class="status-card">
+        <div class="status-card-title">${g.goal_title}</div>
+        <div class="status-card-sub">${g.purpose_category} · ${statusLabel}</div>
+        <div class="status-bar-track">
+          <div class="status-bar-fill" style="width:${pct}%"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+          <span style="font-size:12px;color:var(--text-sub);">${g.completed_sessions}강 / ${g.total_sessions}강</span>
+          <span class="status-pct">${pct}%</span>
+        </div>
+        ${pct < 100 ? `<div style="font-size:12px;color:var(--primary);margin-top:6px;">목표까지 ${remaining}강 남았어요</div>` : ''}
+      </div>`;
+  }
+
+  // 액션 버튼
+  html += `<div style="padding:8px 16px 20px;display:flex;flex-direction:column;gap:10px;">`;
+  if (nextSession) {
+    html += `
+      <a href="/learn.html?session=${nextSession.id}&lecture=${lectureId}" class="btn btn-primary">
+        ▶ 다음 강의 이어보기 — ${nextSession.goalTitle}
+      </a>`;
+  }
+  html += `
+    <a href="/lecture-detail.html?id=${lectureId}" class="btn btn-outline">강의 상세로 이동</a>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+load().catch(err => {
+  document.getElementById('statusArea').innerHTML =
+    `<div class="empty-state"><p>데이터를 불러오지 못했습니다<br>${err.message}</p></div>`;
+});
+</script>
+</body>
+</html>

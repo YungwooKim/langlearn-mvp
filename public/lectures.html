@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>강의목록 — LangLearn MVP</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .lecture-card { margin: 12px 16px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; cursor: pointer; }
+  .lecture-card:active { opacity: .85; }
+  .lecture-body  { padding: 12px 14px 14px; }
+  .lecture-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .lecture-meta  { font-size: 13px; color: var(--text-sub); }
+  .enrolled-badge { margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-header"><h1>강의목록</h1></div>
+  <div id="lectureList"><div class="empty-state"><div class="spinner"></div></div></div>
+</div>
+
+<script type="module">
+import { requireAuth } from '/js/auth-guard.js';
+import { fetchLectures, fetchUserLectureIds } from '/js/api.js';
+import { renderTabbar } from '/js/tabbar.js';
+
+renderTabbar('lectures');
+const session = requireAuth();
+
+async function loadData() {
+  const [allLectures, enrolledIds] = await Promise.all([
+    fetchLectures(),
+    fetchUserLectureIds(session.user_id)
+  ]);
+
+  const container = document.getElementById('lectureList');
+  if (!allLectures.length) {
+    container.innerHTML = '<div class="empty-state"><p>강의가 없습니다</p></div>';
+    return;
+  }
+
+  container.innerHTML = allLectures.map(l => {
+    const isEnrolled = enrolledIds.includes(l.id);
+    return `
+      <div class="lecture-card" onclick="location.href='/lecture-detail.html?id=${l.id}'">
+        <img class="lecture-thumb-img" src="${l.thumbnail_url || ''}"
+          onerror="this.style.display='none'"
+          alt="${l.title}">
+        <div class="lecture-body">
+          <div class="lecture-title">${l.title}</div>
+          <div class="lecture-meta">${l.instructor}</div>
+          <div class="lecture-meta" style="margin-top:4px;">${(l.description || '').slice(0, 60)}...</div>
+          ${isEnrolled ? '<div class="enrolled-badge"><span class="badge badge-blue">수강 중</span></div>' : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+loadData().catch(err => {
+  document.getElementById('lectureList').innerHTML =
+    `<div class="empty-state"><p>데이터를 불러오지 못했습니다<br>${err.message}</p></div>`;
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>역량 설정 — LangLearn MVP</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  /* 페이지 전체를 뷰포트 높이에 고정 — 내부가 스크롤되는 구조 */
+  .gs-page {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 나의 목표 입력 (compact) */
+  .gs-goal-row {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .gs-goal-label { font-size: 13px; color: var(--text-sub); white-space: nowrap; }
+  .gs-goal-input {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+  }
+  .gs-goal-input:focus { border-color: var(--primary); }
+
+  /* 상단/하단 분할 컨테이너 */
+  .gs-split {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* 상단 패널: 선택된 역량 (45%) */
+  .gs-top {
+    flex: 45;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* 하단 패널: 미선택 역량 (55%) */
+  .gs-bot {
+    flex: 55;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+    border-top: 2px solid var(--border);
+  }
+
+  /* 패널 헤더 — 고정, 스크롤 안 됨 */
+  .gs-panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .gs-panel-title { font-size: 13px; font-weight: 700; color: var(--text-sub); }
+
+  /* 초기화 버튼 */
+  .reset-btn {
+    font-size: 12px;
+    color: var(--primary);
+    background: none;
+    border: 1px solid var(--primary);
+    border-radius: 12px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .reset-btn:active { background: var(--primary); color: #fff; }
+
+  /* 목적 칩 (하단 패널 내부, 고정) */
+  .gs-chips {
+    display: flex;
+    gap: 8px;
+    padding: 8px 16px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .gs-chips::-webkit-scrollbar { display: none; }
+  .gs-chip {
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1.5px solid var(--border);
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .gs-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+  /* 스크롤 영역 */
+  .gs-scroll {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 패널 빈 상태 */
+  .panel-empty {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--text-sub);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  /* ── 선택된 역량 아이템 ── */
+  .sel-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--bg);
+    background: var(--surface);
+  }
+
+  .sel-order {
+    width: 24px;
+    height: 24px;
+    background: var(--primary);
+    color: #fff;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .sel-info { flex: 1; min-width: 0; }
+  .sel-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sel-sub { font-size: 11px; color: var(--text-sub); margin-top: 1px; }
+
+  .sel-arrows {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex-shrink: 0;
+  }
+
+  .arr-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    width: 30px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text);
+    transition: background .1s, color .1s;
+  }
+  .arr-btn:not(:disabled):active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .arr-btn:disabled { opacity: .25; cursor: default; }
+
+  .sel-remove {
+    background: none;
+    border: none;
+    font-size: 22px;
+    color: var(--border);
+    cursor: pointer;
+    padding: 2px 4px;
+    flex-shrink: 0;
+    line-height: 1;
+    transition: color .15s;
+  }
+  .sel-remove:active { color: var(--danger); }
+
+  /* ── 미선택 역량 아이템 ── */
+  .unsel-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--bg);
+  }
+
+  .unsel-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .unsel-info { flex: 1; min-width: 0; }
+  .unsel-title { font-size: 14px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .unsel-sub { font-size: 11px; color: var(--text-sub); margin-top: 1px; }
+
+  .add-btn {
+    background: var(--primary);
+    border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    color: #fff;
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    line-height: 1;
+    transition: opacity .15s;
+  }
+  .add-btn:active { opacity: .7; }
+
+  /* 저장 버튼 — 탭바 위에 띄움 */
+  .save-wrap {
+    flex-shrink: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 10px 16px calc(var(--tab-h) + var(--safe-bottom) + 10px);
+  }
+</style>
+</head>
+<body>
+<div class="page gs-page">
+
+  <div class="page-header">
+    <button class="back-btn" onclick="history.back()">←</button>
+    <h1 id="pageTitle">역량 설정</h1>
+  </div>
+
+  <!-- 나의 목표 compact 입력 -->
+  <div class="gs-goal-row">
+    <span class="gs-goal-label">🎯 나의 목표</span>
+    <input type="text" class="gs-goal-input" id="planLabelInput"
+      placeholder="예: 다음 달 안에 영어 발표 자신감 쌓기" maxlength="60">
+  </div>
+
+  <!-- 상단/하단 분할 영역 -->
+  <div class="gs-split">
+
+    <!-- ── 상단: 선택한 역량 ── -->
+    <div class="gs-top">
+      <div class="gs-panel-head">
+        <span class="gs-panel-title" id="selCount">선택한 역량 (0개)</span>
+        <button class="reset-btn" onclick="resetDefault()">초기화</button>
+      </div>
+      <div class="gs-scroll" id="selectedList">
+        <div class="empty-state"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <!-- ── 하단: 추가할 역량 ── -->
+    <div class="gs-bot">
+      <div class="gs-panel-head">
+        <span class="gs-panel-title">추가할 역량</span>
+      </div>
+      <!-- 목적 필터 칩 (하단에만 적용) -->
+      <div class="gs-chips" id="purposeChips"></div>
+      <div class="gs-scroll" id="unselectedList">
+        <div class="empty-state"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 저장 버튼 -->
+  <div class="save-wrap">
+    <button class="btn btn-primary" id="saveBtn" onclick="saveGoals()">저장하기</button>
+  </div>
+
+</div>
+
+<script type="module">
+import { requireAuth } from '/js/auth-guard.js';
+import {
+  fetchGoalsWithSessions, setUserGoalsSelection,
+  fetchUserGoalProgress, fetchUserPlans, saveUserPlan,
+  setActiveLecture, fetchUserRoutine, fetchNotificationSettings
+} from '/js/api.js';
+import { openNotificationModal, closeNotificationModal } from '/js/notification-modal.js';
+import { openTimeGoalModal, closeTimeGoalModal } from '/js/time-goal-modal.js';
+import { openCoachModal, closeCoachModal } from '/js/coach-modal.js';
+import { renderTabbar } from '/js/tabbar.js';
+
+renderTabbar('my-lectures');
+const session = requireAuth();
+const lectureId = new URLSearchParams(location.search).get('lecture');
+if (!lectureId) location.replace('/lectures.html');
+
+let allGoals        = []; // {id, title, subtitle, purpose_category, sessions:[]}
+let selectedIds     = new Set();
+let sortedSelected  = []; // 선택된 goal ID 배열 (순서 = 표시 순서)
+let activePurpose   = '전체';
+
+/* ── 초기 로드 ── */
+async function init() {
+  const [goalsWithSessions, allProgress, plans] = await Promise.all([
+    fetchGoalsWithSessions(lectureId),
+    fetchUserGoalProgress(session.user_id),
+    fetchUserPlans(session.user_id)
+  ]);
+  allGoals = goalsWithSessions;
+
+  const existing = (allProgress || [])
+    .filter(p => p.lecture_id === lectureId)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+  if (existing.length > 0) {
+    /* 수정 모드: 기존 선택 복원 */
+    for (const p of existing) {
+      selectedIds.add(p.goal_id);
+      sortedSelected.push(p.goal_id);
+    }
+    document.getElementById('pageTitle').textContent = '역량 수정';
+  } else {
+    /* 신규: 기본값 = 전체 선택, 기본 순서 */
+    for (const g of allGoals) {
+      selectedIds.add(g.id);
+      sortedSelected.push(g.id);
+    }
+  }
+
+  /* 나의 목표 기존값 */
+  const existingPlan = (plans || []).find(p => p.lecture_id === lectureId);
+  if (existingPlan?.label) {
+    document.getElementById('planLabelInput').value = existingPlan.label;
+  }
+
+  renderChips();
+  renderBoth();
+}
+
+/* ── 목적 칩 ── */
+function renderChips() {
+  const purposes = ['전체', ...new Set(allGoals.map(g => g.purpose_category).filter(Boolean))];
+  document.getElementById('purposeChips').innerHTML = purposes.map(p => `
+    <button type="button" class="gs-chip${p === activePurpose ? ' active' : ''}"
+      onclick="setPurpose('${p}')">${p}</button>`).join('');
+}
+
+window.setPurpose = function(p) {
+  activePurpose = p;
+  renderChips();
+  renderUnselected(); // 상단은 변경 없음
+};
+
+/* ── 양쪽 동시 렌더 ── */
+function renderBoth() {
+  renderSelected();
+  renderUnselected();
+}
+
+/* ── 상단: 선택된 역량 렌더 ── */
+function renderSelected() {
+  const goalMap = Object.fromEntries(allGoals.map(g => [g.id, g]));
+  const container = document.getElementById('selectedList');
+
+  document.getElementById('selCount').textContent = `선택한 역량 (${sortedSelected.length}개)`;
+
+  if (!sortedSelected.length) {
+    container.innerHTML = `<div class="panel-empty">아래에서 역량을 추가해보세요</div>`;
+    return;
+  }
+
+  container.innerHTML = sortedSelected.map((id, i) => {
+    const g = goalMap[id];
+    if (!g) return '';
+    const isFirst = i === 0;
+    const isLast  = i === sortedSelected.length - 1;
+    return `
+      <div class="sel-item">
+        <div class="sel-order">${i + 1}</div>
+        <div class="sel-info">
+          <div class="sel-title">${g.title}</div>
+          ${g.subtitle ? `<div class="sel-sub">${g.subtitle}</div>` : ''}
+        </div>
+        <div class="sel-arrows">
+          <button class="arr-btn" title="위로" onclick="moveGoal('${id}', -1)"
+            ${isFirst ? 'disabled' : ''}>▲</button>
+          <button class="arr-btn" title="아래로" onclick="moveGoal('${id}', 1)"
+            ${isLast ? 'disabled' : ''}>▼</button>
+        </div>
+        <button class="sel-remove" title="제거" onclick="removeGoal('${id}')">×</button>
+      </div>`;
+  }).join('');
+}
+
+/* ── 하단: 미선택 역량 렌더 ── */
+function renderUnselected() {
+  const source = activePurpose === '전체'
+    ? allGoals
+    : allGoals.filter(g => g.purpose_category === activePurpose);
+  const unselected = source.filter(g => !selectedIds.has(g.id));
+  const container = document.getElementById('unselectedList');
+
+  if (!unselected.length) {
+    const msg = selectedIds.size === allGoals.length
+      ? '모든 역량이 선택됐어요 ✓'
+      : '이 목적에 추가할 역량이 없어요';
+    container.innerHTML = `<div class="panel-empty">${msg}</div>`;
+    return;
+  }
+
+  container.innerHTML = unselected.map(g => `
+    <div class="unsel-item">
+      <div class="unsel-icon"></div>
+      <div class="unsel-info">
+        <div class="unsel-title">${g.title}</div>
+        ${g.subtitle ? `<div class="unsel-sub">${g.subtitle}</div>` : ''}
+      </div>
+      <button class="add-btn" title="추가" onclick="addGoal('${g.id}')">+</button>
+    </div>`).join('');
+}
+
+/* ── 역량 추가 (하단 → 상단 끝에 추가) ── */
+window.addGoal = function(goalId) {
+  if (selectedIds.has(goalId)) return;
+  selectedIds.add(goalId);
+  sortedSelected.push(goalId);
+  renderBoth();
+  /* 추가 후 상단 목록 맨 아래로 스크롤 */
+  requestAnimationFrame(() => {
+    const s = document.getElementById('selectedList');
+    s.scrollTop = s.scrollHeight;
+  });
+};
+
+/* ── 역량 제거 (상단 → 하단으로) ── */
+window.removeGoal = function(goalId) {
+  selectedIds.delete(goalId);
+  sortedSelected = sortedSelected.filter(id => id !== goalId);
+  renderBoth();
+};
+
+/* ── 순서 이동 ── */
+window.moveGoal = function(goalId, dir) {
+  const idx = sortedSelected.indexOf(goalId);
+  if (idx < 0) return;
+  const next = idx + dir;
+  if (next < 0 || next >= sortedSelected.length) return;
+  [sortedSelected[idx], sortedSelected[next]] = [sortedSelected[next], sortedSelected[idx]];
+  renderSelected(); // 상단만 재렌더
+};
+
+/* ── 초기화: 전체 선택 + 기본 순서 ── */
+window.resetDefault = function() {
+  selectedIds = new Set(allGoals.map(g => g.id));
+  sortedSelected = allGoals.map(g => g.id);
+  renderBoth();
+};
+
+/* ── 온보딩 큐 실행 헬퍼 ── */
+function runOnboardingQueue(queue, done) {
+  if (!queue.length) { done(); return; }
+  const { open, close, closeId } = queue[0];
+  const next = () => runOnboardingQueue(queue.slice(1), done);
+  open({
+    userId: session.user_id,
+    onSaved: () => { close(); next(); }
+  });
+  // X 버튼도 다음 단계로 이어줌 (80ms 후 DOM 생성 보장)
+  setTimeout(() => {
+    const closeBtn = document.getElementById(closeId);
+    if (closeBtn) closeBtn.onclick = () => { close(); next(); };
+  }, 80);
+}
+
+/* ── 저장 ── */
+window.saveGoals = async function() {
+  if (sortedSelected.length === 0) {
+    alert('역량을 하나 이상 선택해주세요'); return;
+  }
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    /* ① 역량 선택 일괄 저장 */
+    const items = sortedSelected.map((id, i) => ({ goalId: id, sortOrder: i }));
+    await setUserGoalsSelection(session.user_id, lectureId, items);
+
+    /* ② 나의 목표 저장 */
+    const planLabel = document.getElementById('planLabelInput').value.trim();
+    if (planLabel) await saveUserPlan(session.user_id, lectureId, planLabel);
+
+    /* ③ 집중 강의 자동 지정 */
+    await setActiveLecture(session.user_id, lectureId);
+
+    btn.textContent = '✅ 저장 완료';
+
+    /* ④ 온보딩 게이팅: 미설정 항목만 큐에 추가 */
+    const [routine, notiSettings] = await Promise.all([
+      fetchUserRoutine(session.user_id),
+      fetchNotificationSettings(session.user_id)
+    ]);
+
+    const queue = [];
+
+    // 코치 미설정 → 코치 먼저
+    if (!routine?.coach_key) {
+      queue.push({
+        open: openCoachModal,
+        close: closeCoachModal,
+        closeId: '_coachClose'
+      });
+    }
+
+    // 학습시간 미설정
+    if (!routine?.study_minutes) {
+      queue.push({
+        open: openTimeGoalModal,
+        close: closeTimeGoalModal,
+        closeId: '_tgClose'
+      });
+    }
+
+    // 알림 미설정
+    if (!notiSettings) {
+      queue.push({
+        open: openNotificationModal,
+        close: closeNotificationModal,
+        closeId: '_notiClose'
+      });
+    }
+
+    runOnboardingQueue(queue, () => { location.href = '/home.html'; });
+
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '저장하기';
+    alert('저장 실패: ' + e.message);
+  }
+};
+
+init().catch(err => {
+  document.getElementById('selectedList').innerHTML =
+    `<div class="panel-empty">로드 실패: ${err.message}</div>`;
+  document.getElementById('unselectedList').innerHTML = '';
+});
+</script>
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+</body>
+</html>

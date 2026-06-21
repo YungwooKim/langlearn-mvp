@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>설정 — LangLearn MVP</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .settings-section { padding: 8px 0; }
+  .settings-row { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .settings-row:active { background: var(--bg); }
+  .settings-row-left .row-title { font-size: 16px; font-weight: 500; }
+  .settings-row-left .row-sub   { font-size: 13px; color: var(--text-sub); margin-top: 2px; }
+  .settings-row-right { color: var(--text-sub); }
+  .profile-card { margin: 16px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; display: flex; align-items: center; gap: 14px; }
+  .profile-avatar { width: 52px; height: 52px; border-radius: 50%; background: var(--primary); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 22px; font-weight: 700; flex-shrink: 0; }
+  .profile-name { font-size: 18px; font-weight: 700; }
+  .profile-since { font-size: 13px; color: var(--text-sub); margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-header"><h1>설정</h1></div>
+
+  <div id="profileArea"></div>
+
+  <div class="section-head" style="padding:16px 16px 8px;">코치</div>
+  <div class="settings-section">
+    <div class="settings-row" onclick="openCoachSetting()">
+      <div class="settings-row-left">
+        <div class="row-title">내 코치</div>
+        <div class="row-sub" id="coachSummary">설정 안 됨</div>
+      </div>
+      <div class="settings-row-right">›</div>
+    </div>
+  </div>
+
+  <div class="section-head" style="padding:16px 16px 8px;">학습 루틴</div>
+  <div class="settings-section">
+    <div class="settings-row" onclick="openTimeModal()">
+      <div class="settings-row-left">
+        <div class="row-title">하루 학습시간 목표</div>
+        <div class="row-sub" id="timeSummary">설정 안 됨</div>
+      </div>
+      <div class="settings-row-right">›</div>
+    </div>
+  </div>
+
+  <div class="section-head" style="padding:16px 16px 8px;">알림</div>
+  <div class="settings-section">
+    <div class="settings-row" onclick="openNotiModal()">
+      <div class="settings-row-left">
+        <div class="row-title">학습 알림 설정</div>
+        <div class="row-sub" id="notiSummary">설정 안 됨</div>
+      </div>
+      <div class="settings-row-right">›</div>
+    </div>
+  </div>
+
+  <div class="section-head" style="padding:16px 16px 8px;">계정</div>
+  <div class="settings-section">
+    <div class="settings-row" onclick="logout()">
+      <div class="settings-row-left">
+        <div class="row-title" style="color:var(--danger);">로그아웃</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding:24px 16px;font-size:12px;color:var(--text-sub);text-align:center;">LangLearn MVP v0.1</div>
+</div>
+
+<script type="module">
+import { requireAuth, clearSession } from '/js/auth-guard.js';
+import { fetchNotificationSettings, fetchUserRoutine } from '/js/api.js';
+import { openNotificationModal } from '/js/notification-modal.js';
+import { openTimeGoalModal, summarizeStudyMinutes } from '/js/time-goal-modal.js';
+import { openCoachModal } from '/js/coach-modal.js';
+import { renderTabbar } from '/js/tabbar.js';
+
+renderTabbar('settings');
+const session = requireAuth();
+
+/* 프로필 */
+document.getElementById('profileArea').innerHTML = `
+  <div class="profile-card">
+    <div class="profile-avatar">${session.nickname[0].toUpperCase()}</div>
+    <div>
+      <div class="profile-name">${session.nickname}</div>
+      <div class="profile-since">LangLearn 학습자</div>
+    </div>
+  </div>`;
+
+/* 코치 요약 텍스트 */
+const COACH_DISPLAY = { warm: '🌱 따뜻한 응원형', strict: '🔥 엄격한 코치', friend: '🙌 친구같은 코치', system: '🤖 시스템(기본)' };
+async function loadCoachSummary() {
+  const r = await fetchUserRoutine(session.user_id);
+  const el = document.getElementById('coachSummary');
+  el.textContent = r?.coach_key ? (COACH_DISPLAY[r.coach_key] || r.coach_key) : '설정 안 됨';
+}
+
+/* 알림 요약 텍스트 */
+async function loadNotiSummary() {
+  const s = await fetchNotificationSettings(session.user_id);
+  const el = document.getElementById('notiSummary');
+  if (!s) { el.textContent = '설정 안 됨'; return; }
+  el.textContent = s.enabled
+    ? `${(s.days || []).join(', ')} · ${(s.send_time || '').slice(0, 5)}`
+    : '알림 꺼짐';
+}
+
+/* 학습시간 요약 텍스트 */
+async function loadTimeSummary() {
+  const r = await fetchUserRoutine(session.user_id);
+  const el = document.getElementById('timeSummary');
+  if (!r?.study_minutes) { el.textContent = '설정 안 됨'; return; }
+  el.textContent = summarizeStudyMinutes(r.study_minutes);
+}
+
+loadCoachSummary();
+loadNotiSummary();
+loadTimeSummary();
+
+/* URL에서 자동 모달 오픈 */
+if (new URLSearchParams(location.search).get('openNotification') === '1') {
+  setTimeout(() => openNotiModal(), 300);
+}
+
+window.openCoachSetting = async () => {
+  await openCoachModal({
+    userId: session.user_id,
+    onSaved: async () => {
+      await loadCoachSummary();
+      showToast('코치가 저장되었습니다');
+    }
+  });
+};
+
+window.openTimeModal = async () => {
+  await openTimeGoalModal({
+    userId: session.user_id,
+    onSaved: async () => {
+      await loadTimeSummary();
+      showToast('학습 루틴이 저장되었습니다');
+    }
+  });
+};
+
+window.openNotiModal = async () => {
+  await openNotificationModal({
+    userId: session.user_id,
+    onSaved: async () => {
+      await loadNotiSummary();
+      showToast('알림 설정이 저장되었습니다');
+    }
+  });
+};
+
+window.logout = () => {
+  if (!confirm('로그아웃 하시겠습니까?')) return;
+  clearSession();
+  location.replace('/login.html');
+};
+
+function showToast(msg) {
+  let t = document.querySelector('.toast');
+  if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+</script>
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+﻿# Vercel
+.vercel
+
+# 환경 변수
+.env
+.env.local
+.env.*.local
+
+# 에디터
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log

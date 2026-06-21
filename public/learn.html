@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>수강 — LangLearn MVP</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .video-wrap { position: relative; width: 100%; padding-top: 56.25%; background: #000; }
+  .video-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: none; }
+  .session-nav { padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .session-nav-title { font-size: 15px; font-weight: 700; margin-bottom: 2px; }
+  .session-nav-sub   { font-size: 13px; color: var(--text-sub); }
+  .complete-btn { margin: 14px 16px; }
+  .next-session { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border: 1px solid var(--border); margin: 0 16px 12px; border-radius: 10px; cursor: pointer; }
+  .next-session:active { background: var(--bg); }
+  .next-label { font-size: 13px; color: var(--text-sub); }
+  .next-title { font-size: 14px; font-weight: 600; margin-top: 2px; }
+  .already-done { text-align: center; padding: 8px; font-size: 13px; color: var(--success); font-weight: 600; }
+
+  /* 이전/다음 강의 소형 버튼 */
+  .session-nav-btns { display: flex; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+  .session-nav-btn { flex: 1; padding: 8px 0; font-size: 13px; font-weight: 600; color: var(--text-sub); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+  .session-nav-btn:disabled { opacity: .35; cursor: default; }
+  .session-nav-btn.prev { text-align: left; padding-left: 12px; }
+  .session-nav-btn.next { text-align: right; padding-right: 12px; }
+
+  /* 수강 완료 축하 화면 */
+  .completion-screen { display: none; padding: 32px 20px 24px; text-align: center; }
+  .completion-emoji { font-size: 52px; margin-bottom: 12px; }
+  .completion-title { font-size: 22px; font-weight: 800; margin-bottom: 8px; }
+  .completion-sub { font-size: 14px; color: var(--text-sub); margin-bottom: 20px; line-height: 1.6; }
+  .completion-goals { text-align: left; background: var(--bg); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+  .completion-goals-title { font-size: 12px; font-weight: 700; color: var(--text-sub); margin-bottom: 8px; }
+  .completion-goal-item { font-size: 14px; font-weight: 600; padding: 3px 0; }
+  .completion-missed { text-align: left; margin-bottom: 24px; }
+  .completion-missed-title { font-size: 12px; font-weight: 700; color: var(--text-sub); margin-bottom: 6px; }
+  .completion-missed-text { font-size: 13px; color: var(--text-sub); line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="page-header">
+    <button class="back-btn" id="backBtn">←</button>
+    <h1 id="pageTitle">수강 중</h1>
+  </div>
+
+  <!-- 수강 완료 축하 화면 -->
+  <div class="completion-screen" id="completionScreen">
+    <div class="completion-emoji">🎉</div>
+    <div class="completion-title">역량 목표 달성!</div>
+    <div class="completion-sub" id="completionSub"></div>
+    <div class="completion-goals" id="completionGoals" style="display:none"></div>
+    <div class="completion-missed" id="completionMissed" style="display:none"></div>
+    <a href="/home.html" class="btn btn-primary" style="display:block;margin-bottom:12px;">대시보드로 돌아가기</a>
+    <div style="font-size:12px;color:var(--text-sub);" id="redirectCountdown"></div>
+  </div>
+
+  <!-- 수강 화면 -->
+  <div id="playerView">
+    <div class="video-wrap">
+      <iframe id="ytFrame" src="" allowfullscreen allow="autoplay"></iframe>
+    </div>
+
+    <div class="session-nav">
+      <div class="session-nav-title" id="sessionTitle">로딩 중...</div>
+      <div class="session-nav-sub" id="sessionSub"></div>
+    </div>
+    <div class="session-nav-btns" id="sessionNavBtns"></div>
+
+    <div class="complete-btn">
+      <button class="btn btn-primary" id="completeBtn" onclick="markComplete()">✅ 수강 완료</button>
+      <div class="already-done hidden" id="alreadyDone">이미 완료한 강의예요 👍</div>
+    </div>
+
+    <div id="nextSessionWrap"></div>
+
+    <!-- 역량 현황 배너 -->
+    <div class="goal-banner" id="goalBanner" style="margin:0 16px 16px;display:none;">
+      <div class="goal-banner-title" id="bannerTitle"></div>
+      <div class="progress-wrap">
+        <div class="progress-label"><span id="bannerCompleted"></span><span id="bannerTotal"></span></div>
+        <div class="progress-bar"><div class="progress-fill" id="bannerFill" style="width:0%"></div></div>
+      </div>
+      <div id="bannerRemaining" style="font-size:13px;color:var(--primary);margin-top:6px;"></div>
+      <div id="bannerNextBtn" style="margin-top:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { requireAuth } from '/js/auth-guard.js';
+import {
+  completeSession, fetchCompletedSessionIds, fetchUserGoalProgress,
+  buildPersonalizedSequence, fetchGoalsByLecture
+} from '/js/api.js';
+import { supabase } from '/js/supabase-client.js';
+import { renderTabbar } from '/js/tabbar.js';
+
+renderTabbar('my-lectures');
+
+const session = requireAuth();
+const params = new URLSearchParams(location.search);
+const sessionId = params.get('session');
+const lectureId = params.get('lecture');
+
+if (!sessionId) { location.replace('/lectures.html'); }
+
+let currentSession = null;
+let personalSequence = []; // 개인화 순서 [{id, title, sectionTitle, goalId, goalTitle, ...}]
+let allLectureSessions = []; // 폴백용 전체 세션
+let completedIds = [];
+let allLectureGoals = []; // 이 강의의 전체 역량 목록
+
+async function load() {
+  // 현재 세션 정보
+  const { data: s } = await supabase
+    .from('sessions').select('*, sections(title, order_no)').eq('id', sessionId).single();
+  if (!s) { location.replace('/lectures.html'); return; }
+  currentSession = s;
+
+  // 병렬 로드
+  const [completedResult, seqResult, allGoals] = await Promise.all([
+    fetchCompletedSessionIds(session.user_id),
+    buildPersonalizedSequence(session.user_id, lectureId),
+    fetchGoalsByLecture(lectureId)
+  ]);
+
+  completedIds = completedResult;
+  personalSequence = seqResult.sequence;
+  allLectureGoals = allGoals || [];
+
+  // 폴백용 전체 세션
+  const { data: all } = await supabase
+    .from('sessions').select('*').eq('lecture_id', lectureId).order('order_no');
+  allLectureSessions = all || [];
+
+  // 뒤로가기 → 강의 상세 페이지
+  document.getElementById('backBtn').onclick = () => {
+    location.href = `/lecture-detail.html?id=${lectureId}`;
+  };
+
+  renderPlayer();
+  renderNavBtns();
+  renderNextSession();
+  await renderGoalBanner();
+}
+
+function renderPlayer() {
+  document.getElementById('ytFrame').src =
+    `https://www.youtube.com/embed/${currentSession.youtube_video_id}?autoplay=1&enablejsapi=1`;
+  document.getElementById('sessionTitle').textContent = currentSession.title;
+  document.getElementById('sessionSub').textContent =
+    `${currentSession.sections?.title || ''} · ${Math.floor(currentSession.duration_sec / 60)}분`;
+  document.getElementById('pageTitle').textContent = currentSession.title;
+
+  const isCompleted = completedIds.includes(sessionId);
+  if (isCompleted) {
+    document.getElementById('completeBtn').classList.add('hidden');
+    document.getElementById('alreadyDone').classList.remove('hidden');
+  }
+}
+
+/** 이전 세션 */
+function getPrevSession() {
+  if (personalSequence.length) {
+    const idx = personalSequence.findIndex(s => s.id === sessionId);
+    if (idx > 0) return personalSequence[idx - 1];
+    if (idx !== -1) return null;
+  }
+  const idx = allLectureSessions.findIndex(s => s.id === sessionId);
+  return idx > 0 ? allLectureSessions[idx - 1] : null;
+}
+
+/** 다음 세션: 개인화 순서 기준, 폴백은 전체 order_no 순 */
+function getNextSession() {
+  if (personalSequence.length) {
+    const idx = personalSequence.findIndex(s => s.id === sessionId);
+    if (idx !== -1 && idx + 1 < personalSequence.length) {
+      return personalSequence[idx + 1];
+    }
+    // 이 세션이 개인화 시퀀스에 있으면 next는 없음(마지막)
+    if (idx !== -1) return null;
+  }
+  // 폴백: 전체 세션 순서
+  const idx = allLectureSessions.findIndex(s => s.id === sessionId);
+  return allLectureSessions[idx + 1] || null;
+}
+
+/** 이전/다음 소형 버튼 렌더 */
+function renderNavBtns() {
+  const prev = getPrevSession();
+  const next = getNextSession();
+  const wrap = document.getElementById('sessionNavBtns');
+  wrap.innerHTML = `
+    <button class="session-nav-btn prev" ${prev ? `onclick="location.href='/learn.html?session=${prev.id}&lecture=${lectureId}'"` : 'disabled'}>
+      ← ${prev ? prev.title.length > 14 ? prev.title.slice(0, 14) + '…' : prev.title : '이전 강의 없음'}
+    </button>
+    <button class="session-nav-btn next" ${next ? `onclick="location.href='/learn.html?session=${next.id}&lecture=${lectureId}'"` : 'disabled'}>
+      ${next ? next.title.length > 14 ? next.title.slice(0, 14) + '…' : next.title : '다음 강의 없음'} →
+    </button>`;
+}
+
+function renderNextSession() {
+  const next = getNextSession();
+  const wrap = document.getElementById('nextSessionWrap');
+  if (!next) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `
+    <div class="next-session" onclick="location.href='/learn.html?session=${next.id}&lecture=${lectureId}'">
+      <div>
+        <div class="next-label">다음 강의${next.goalTitle ? ` · ${next.goalTitle}` : ''}</div>
+        <div class="next-title">${next.title}</div>
+      </div>
+      <span style="font-size:22px;color:var(--text-sub)">▶</span>
+    </div>`;
+}
+
+async function renderGoalBanner() {
+  // 현재 세션이 속한 역량 찾기
+  const seqItem = personalSequence.find(s => s.id === sessionId);
+  if (!seqItem) return;
+
+  const progress = await fetchUserGoalProgress(session.user_id);
+  const g = progress?.find(p => p.goal_id === seqItem.goalId);
+  if (!g) return;
+
+  document.getElementById('goalBanner').style.display = 'block';
+  document.getElementById('bannerTitle').textContent = `🎯 ${g.goal_title}`;
+  document.getElementById('bannerCompleted').textContent = `${g.completed_sessions}강 완료`;
+  document.getElementById('bannerTotal').textContent = ` / ${g.total_sessions}강`;
+  document.getElementById('bannerFill').style.width = `${g.progress_pct}%`;
+  const remaining = g.total_sessions - g.completed_sessions;
+  document.getElementById('bannerRemaining').textContent =
+    remaining > 0 ? `목표까지 ${remaining}강 남았어요` : '이 역량 완료! 🎉';
+
+  // 다음 강의로 버튼
+  const next = getNextSession();
+  const nextBtnEl = document.getElementById('bannerNextBtn');
+  if (next) {
+    nextBtnEl.innerHTML = `
+      <button onclick="location.href='/learn.html?session=${next.id}&lecture=${lectureId}'"
+        style="width:100%;padding:9px;font-size:13px;font-weight:700;color:var(--primary);background:#e8f0fe;border:none;border-radius:8px;cursor:pointer;">
+        다음 강의로 → ${next.title.length > 16 ? next.title.slice(0,16)+'…' : next.title}
+      </button>`;
+  } else {
+    nextBtnEl.innerHTML = '';
+  }
+}
+
+/** 선택 역량의 모든 세션을 완료했는지 확인 */
+function isAllPersonalDone(updatedCompleted) {
+  if (!personalSequence.length) return false;
+  return personalSequence.every(s => updatedCompleted.includes(s.id));
+}
+
+/** 축하 화면 표시 */
+function showCompletion(updatedCompleted) {
+  document.getElementById('playerView').style.display = 'none';
+  const screen = document.getElementById('completionScreen');
+  screen.style.display = 'block';
+
+  // 완료한 역량 목록
+  const myGoalTitles = [...new Set(personalSequence.map(s => s.goalTitle))];
+  document.getElementById('completionSub').textContent =
+    `선택한 역량 ${myGoalTitles.length}개를 모두 완료했어요!`;
+
+  const goalsEl = document.getElementById('completionGoals');
+  goalsEl.style.display = 'block';
+  goalsEl.innerHTML = `<div class="completion-goals-title">✅ 완료한 역량</div>`
+    + myGoalTitles.map(t => `<div class="completion-goal-item">· ${t}</div>`).join('');
+
+  // 이번 강의에서 다루지 않은 역량 (선택하지 않았거나 미선택 역량)
+  const selectedGoalIds = new Set(personalSequence.map(s => s.goalId));
+  const uncoveredGoals = allLectureGoals.filter(g => !selectedGoalIds.has(g.id));
+  if (uncoveredGoals.length) {
+    const missedEl = document.getElementById('completionMissed');
+    missedEl.style.display = 'block';
+    missedEl.innerHTML = `<div class="completion-missed-title">📖 이번 강의에서 다루지 않은 내용</div>`
+      + `<div class="completion-missed-text">${uncoveredGoals.map(g => g.title).join(' · ')}</div>`;
+  }
+
+  // 5초 후 홈으로
+  let count = 5;
+  const countdown = document.getElementById('redirectCountdown');
+  countdown.textContent = `${count}초 후 대시보드로 이동합니다`;
+  const timer = setInterval(() => {
+    count--;
+    if (count <= 0) {
+      clearInterval(timer);
+      location.href = '/home.html';
+    } else {
+      countdown.textContent = `${count}초 후 대시보드로 이동합니다`;
+    }
+  }, 1000);
+}
+
+window.markComplete = async () => {
+  const btn = document.getElementById('completeBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    await completeSession(session.user_id, sessionId);
+    completedIds.push(sessionId);
+    btn.classList.add('hidden');
+    document.getElementById('alreadyDone').classList.remove('hidden');
+    await renderGoalBanner();
+
+    // 개인화 시퀀스에서의 위치 확인
+    const idxInPersonal = personalSequence.findIndex(s => s.id === sessionId);
+    const inPersonalSequence = idxInPersonal !== -1;
+
+    if (inPersonalSequence && isAllPersonalDone(completedIds)) {
+      // 모든 선택 역량 완료 → 축하 화면
+      setTimeout(() => showCompletion(completedIds), 1000);
+    } else {
+      // 다음 강의로 이동
+      const next = getNextSession();
+      if (next) {
+        renderNextSession(); // 버튼 갱신
+        setTimeout(() => {
+          location.href = `/learn.html?session=${next.id}&lecture=${lectureId}`;
+        }, 2500);
+      }
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '✅ 수강 완료';
+    alert('오류: ' + e.message);
+  }
+};
+
+load();
+</script>
+</body>
+</html>
